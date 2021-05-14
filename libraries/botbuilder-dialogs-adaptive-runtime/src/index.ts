@@ -4,27 +4,29 @@
 import * as z from 'zod';
 import fs from 'fs';
 import path from 'path';
+
 import { Configuration } from './configuration';
+import { ConfigurationAdaptiveDialogBot } from './configurationAdaptiveDialogBot';
+import { ConfigurationConstants } from './configurationConstants';
+import { ConfigurationResourceExporer } from './configurationResourceExplorer';
+import { CoreBotAdapter } from './coreBotAdapter';
 
 import LuisBotComponent from 'botbuilder-ai-luis';
 import QnAMakerBotComponent from 'botbuilder-ai-qna';
-import { AdaptiveBotComponent, LanguageGenerationBotComponent } from 'botbuilder-dialogs-adaptive';
+import { AdaptiveBotComponent, LanguageGenerationBotComponent, LanguagePolicy } from 'botbuilder-dialogs-adaptive';
 import { ApplicationInsightsTelemetryClient, TelemetryInitializerMiddleware } from 'botbuilder-applicationinsights';
 import { BlobsStorage, BlobsTranscriptStore } from 'botbuilder-azure-blobs';
 import { ComponentDeclarativeTypes, ResourceExplorer } from 'botbuilder-dialogs-declarative';
-import { ConfigurationResourceExporer } from './configurationResourceExplorer';
-import { CoreBot } from './coreBot';
-import { CoreBotAdapter } from './coreBotAdapter';
 import { CosmosDbPartitionedStorage } from 'botbuilder-azure';
-import { DialogsBotComponent, MemoryScope, PathResolver } from 'botbuilder-dialogs';
+import { Dialog, DialogsBotComponent, MemoryScope, PathResolver } from 'botbuilder-dialogs';
 import { ServiceCollection } from 'botbuilder-dialogs-adaptive-runtime-core';
 
 import {
     AuthenticationConfiguration,
-    allowedCallersClaimsValidator,
     BotFrameworkAuthentication,
-    ServiceClientCredentialsFactory,
     ConnectorClientOptions,
+    ServiceClientCredentialsFactory,
+    allowedCallersClaimsValidator,
 } from 'botframework-connector';
 
 import {
@@ -152,7 +154,7 @@ function addStorage(services: ServiceCollection, configuration: Configuration): 
     services.addFactory('userState', ['storage'], ({ storage }) => new UserState(storage));
 
     services.addFactory('storage', () => {
-        const storage = configuration.string(['runtimeSettings', 'storage']);
+        const storage = configuration.string([ConfigurationConstants.RuntimeSettingsKey, 'storage']);
 
         switch (storage) {
             case 'BlobsStorage': {
@@ -215,7 +217,10 @@ function addSkills(services: ServiceCollection, configuration: Configuration): v
 
     services.addFactory('authenticationConfiguration', () => {
         const allowedCallers =
-            configuration.type(['runtimeSettings', 'skills', 'allowedCallers'], z.array(z.string())) ?? [];
+            configuration.type(
+                [ConfigurationConstants.RuntimeSettingsKey, 'skills', 'allowedCallers'],
+                z.array(z.string())
+            ) ?? [];
 
         const skills = Object.values(
             configuration.type(
@@ -275,6 +280,9 @@ function addSkills(services: ServiceCollection, configuration: Configuration): v
 }
 
 function addCoreBot(services: ServiceCollection, configuration: Configuration): void {
+    // TODO fix
+    services.addFactory('languagePolicy', () => new LanguagePolicy());
+
     services.addFactory<
         BotFrameworkAuthentication,
         {
@@ -304,39 +312,44 @@ function addCoreBot(services: ServiceCollection, configuration: Configuration): 
     services.addFactory<
         ActivityHandlerBase,
         {
+            botFrameworkAuthentication: BotFrameworkAuthentication;
             botTelemetryClient: BotTelemetryClient;
             conversationState: ConversationState;
+            dialogs: Dialog[];
             memoryScopes: MemoryScope[];
             pathResolvers: PathResolver[];
             resourceExplorer: ResourceExplorer;
-            botFrameworkAuthentication: BotFrameworkAuthentication;
             skillConversationIdFactory: SkillConversationIdFactoryBase;
             userState: UserState;
+            languagePolicy: LanguagePolicy;
         }
     >(
         'bot',
         [
+            'botFrameworkAuthentication',
             'botTelemetryClient',
             'conversationState',
+            'dialogs',
             'memoryScopes',
             'pathResolvers',
             'resourceExplorer',
-            'botFrameworkAuthentication',
             'skillConversationIdFactory',
             'userState',
+            'languagePolicy',
         ],
         (dependencies) =>
-            new CoreBot(
+            new ConfigurationAdaptiveDialogBot(
+                configuration,
                 dependencies.resourceExplorer,
-                dependencies.userState,
                 dependencies.conversationState,
-                dependencies.botFrameworkAuthentication,
+                dependencies.userState,
                 dependencies.skillConversationIdFactory,
+                dependencies.languagePolicy,
+                dependencies.botFrameworkAuthentication,
                 dependencies.botTelemetryClient,
-                configuration.string(['defaultLocale']) ?? 'en-us',
-                configuration.string(['defaultRootDialog']) ?? 'main.dialog',
                 dependencies.memoryScopes,
-                dependencies.pathResolvers
+                dependencies.pathResolvers,
+                dependencies.dialogs
             )
     );
 
@@ -383,7 +396,7 @@ async function addSettingsBotComponents(services: ServiceCollection, configurati
 
     const components =
         configuration.type(
-            ['runtimeSettings', 'components'],
+            [ConfigurationConstants.RuntimeSettingsKey, 'components'],
             z.array(
                 z
                     .object({
@@ -420,7 +433,7 @@ async function addSettingsBotComponents(services: ServiceCollection, configurati
 // - Liberal `||` needed as many settings are initialized as `""` and should still be overridden
 // - Any generated files take precedence over `appsettings.json`.
 function addComposerConfiguration(configuration: Configuration): void {
-    const botRoot = configuration.string(['bot']) || '.';
+    const botRoot = configuration.string([ConfigurationConstants.BotKey]) || '.';
     configuration.set(['BotRoot'], botRoot);
 
     const luisRegion =
@@ -450,11 +463,11 @@ function addComposerConfiguration(configuration: Configuration): void {
 
 async function normalizeConfiguration(configuration: Configuration, applicationRoot: string): Promise<void> {
     // Override applicationRoot setting
-    configuration.set(['applicationRoot'], applicationRoot);
+    configuration.set([ConfigurationConstants.ApplicationRootKey], applicationRoot);
 
     // Override root dialog setting
     configuration.set(
-        ['defaultRootDialog'],
+        [ConfigurationConstants.RootDialogKey],
         await new Promise<string | undefined>((resolve, reject) =>
             // eslint-disable-next-line security/detect-non-literal-fs-filename
             fs.readdir(applicationRoot, (err, files) =>
@@ -540,6 +553,7 @@ export async function getRuntimeServices(
         connectorClientOptions: undefined,
         customAdapters: new Map(),
         declarativeTypes: [],
+        dialogs: [],
         memoryScopes: [],
         middlewares: new MiddlewareSet(),
         pathResolvers: [],
@@ -557,7 +571,7 @@ export async function getRuntimeServices(
     registerLuisComponents(services, configuration);
     registerQnAComponents(services, configuration);
 
-    const runtimeSettings = configuration.bind(['runtimeSettings']);
+    const runtimeSettings = configuration.bind([ConfigurationConstants.RuntimeSettingsKey]);
 
     addCoreBot(services, configuration);
     addFeatures(services, runtimeSettings.bind(['features']));
@@ -569,4 +583,4 @@ export async function getRuntimeServices(
     return [services, configuration];
 }
 
-export { Configuration };
+export { Configuration, ConfigurationConstants };
