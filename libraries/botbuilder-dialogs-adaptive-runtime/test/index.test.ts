@@ -4,12 +4,14 @@
 import sinon from 'sinon';
 import { AuthenticationConfiguration, AuthenticationConstants, SkillValidation } from 'botframework-connector';
 import { BlobsStorage } from 'botbuilder-azure-blobs';
-import { BotComponent, BotFrameworkAdapter, MemoryStorage } from 'botbuilder';
+import { Bot, BotComponent, BotFrameworkAdapter, MemoryStorage } from 'botbuilder';
 import { Configuration, getRuntimeServices } from '../src';
 import { ConfigurationConstants } from '../src/configurationConstants';
 import { CosmosDbPartitionedStorage } from 'botbuilder-azure';
 import { ServiceCollection, Configuration as CoreConfiguration } from 'botbuilder-dialogs-adaptive-runtime-core';
 import { ok, rejects, strictEqual } from 'assert';
+import { Dialog, TextPrompt } from 'botbuilder-dialogs';
+import { AdaptiveDialog } from 'botbuilder-dialogs-adaptive';
 
 describe('getRuntimeServices', function () {
     it('works', async function () {
@@ -110,6 +112,24 @@ describe('getRuntimeServices', function () {
 
             const storage = services.mustMakeInstance('storage');
             ok(storage instanceof CosmosDbPartitionedStorage);
+        });
+    });
+
+    describe('dialogs', function () {
+        it('works', async function () {
+            const [services] = await getRuntimeServices(__dirname, __dirname);
+            ok(services);
+
+            services.composeFactory<Dialog[]>('dialogs', (dialogs = []) =>
+                dialogs.concat(new TextPrompt('textPrompt'))
+            );
+
+            const bot = services.mustMakeInstance<Bot>('bot');
+            ok(bot);
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const dialog: AdaptiveDialog = (bot as any).createDialog();
+            ok(dialog.dialogs.find('textPrompt'));
         });
     });
 
