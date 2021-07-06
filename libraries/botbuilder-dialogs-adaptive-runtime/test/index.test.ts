@@ -4,7 +4,6 @@
 import sinon from 'sinon';
 import { AuthenticationConfiguration, AuthenticationConstants, SkillValidation } from 'botframework-connector';
 import { BlobsStorage } from 'botbuilder-azure-blobs';
-import { Bot, BotComponent, BotFrameworkAdapter, MemoryStorage } from 'botbuilder';
 import { Configuration, getRuntimeServices } from '../src';
 import { ConfigurationConstants } from '../src/configurationConstants';
 import { CosmosDbPartitionedStorage } from 'botbuilder-azure';
@@ -13,7 +12,27 @@ import { ok, rejects, strictEqual } from 'assert';
 import { Dialog, TextPrompt } from 'botbuilder-dialogs';
 import { AdaptiveDialog } from 'botbuilder-dialogs-adaptive';
 
+import {
+    BotComponent,
+    BotFrameworkAdapter,
+    InspectionMiddleware,
+    MemoryStorage,
+    MiddlewareSet,
+    SetSpeakMiddleware,
+    ShowTypingMiddleware,
+    TranscriptLoggerMiddleware,
+} from 'botbuilder';
+
 describe('getRuntimeServices', function () {
+    let sandbox: sinon.SinonSandbox;
+    beforeEach(function () {
+        sandbox = sinon.createSandbox();
+    });
+
+    afterEach(function () {
+        sandbox.restore();
+    });
+
     it('works', async function () {
         const [services] = await getRuntimeServices(__dirname, __dirname);
         ok(services);
@@ -133,15 +152,35 @@ describe('getRuntimeServices', function () {
         });
     });
 
-    describe('skills', function () {
-        let sandbox: sinon.SinonSandbox;
-        beforeEach(function () {
-            sandbox = sinon.createSandbox();
-            sandbox.stub(SkillValidation, 'isSkillClaim').returns(true);
-        });
+    describe('features', function () {
+        it('adds the relevant middlewares', async function () {
+            const spy = sandbox.spy(MiddlewareSet.prototype, 'use');
 
-        afterEach(function () {
-            sandbox.restore();
+            const configuration = new Configuration();
+            configuration.set(['runtimeSettings', 'features'], {
+                showTyping: true,
+                setSpeak: {
+                    fallbackToTextForSpeechIfEmpty: true,
+                },
+                traceTranscript: true,
+                useInspection: true,
+            });
+
+            const [services] = await getRuntimeServices(__dirname, configuration);
+            ok(services);
+
+            services.mustMakeInstance('middlewares');
+
+            ok(spy.calledWith(sinon.match.instanceOf(ShowTypingMiddleware)), 'ShowTypingMiddleware');
+            ok(spy.calledWith(sinon.match.instanceOf(SetSpeakMiddleware)), 'SetSpeakMiddleware');
+            ok(spy.calledWith(sinon.match.instanceOf(TranscriptLoggerMiddleware)), 'TranscriptLoggerMiddleware');
+            ok(spy.calledWith(sinon.match.instanceOf(InspectionMiddleware)), 'InspectionMiddleware');
+        });
+    });
+
+    describe('skills', function () {
+        beforeEach(function () {
+            sandbox.stub(SkillValidation, 'isSkillClaim').returns(true);
         });
 
         it('supports .runtimeSettings.skills', async function () {
