@@ -280,7 +280,6 @@ function addSkills(services: ServiceCollection, configuration: Configuration): v
 }
 
 function addCoreBot(services: ServiceCollection, configuration: Configuration): void {
-    // TODO fix
     services.addFactory('languagePolicy', () => new LanguagePolicy());
 
     services.addFactory<
