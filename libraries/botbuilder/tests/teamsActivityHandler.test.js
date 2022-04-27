@@ -2159,26 +2159,6 @@ describe('TeamsActivityHandler', function () {
                 })
                 .startTest();
         });
-
-        it('should not call ConversationUpdate twice', async function () {
-            let ncalls = 0;
-            const activity = createConvUpdateActivity();
-            const bot = new TeamsActivityHandler();
-            bot.onConversationUpdate((context, next) => {
-                ncalls++;
-                return next();
-            });
-            const adapter = new TestAdapter(async (context) => bot.run(context));
-            await adapter
-                .send(activity)
-                .then(() => {
-                    assert(
-                        ncalls === 1,
-                        'On ConversationUpdate handler should only be called once, times called: ' + ncalls.toString()
-                    );
-                })
-                .startTest();
-        });
     });
 
     describe('onEventActivity()', function () {
@@ -2327,28 +2307,51 @@ describe('TeamsActivityHandler', function () {
                 })
                 .startTest();
         });
+    });
 
-        it('should not call middleware handler twice', async function () {
-            const bot = new TeamsActivityHandler();
+    describe('ActivityTypes handlers should not be called twice', function () {
+        const casesToIgnore = new Set([
+            'contactRelationUpdate',
+            'invoke',
+            'invokeResponse',
+            'deleteUserData',
+            'messageUpdate',
+            'messageDelete',
+            'suggestion',
+            'trace',
+            'handoff',
+        ]);
+        const activityTypes = Object.values(ActivityTypes).filter((t) => !casesToIgnore.has(t));
+        function camelCaseToPascalCase(s) {
+            return s.slice(0, 1).toUpperCase() + s.slice(1);
+        }
 
-            const activity = createMeetingEventActivity(false);
-            let ncalls = 0;
+        for (const type of activityTypes) {
+            it(`should not call activities of type ${type} twice`, async function () {
+                function createActivity(type) {
+                    const activity = {
+                        type,
+                        channelId: 'msteams',
+                    };
+                    return activity;
+                }
 
-            bot.onEvent(async (context, next) => {
-                ncalls++;
-                await next();
+                const functionName = `on${camelCaseToPascalCase(type)}`;
+                let ncalls = 0;
+                const activity = createActivity(type);
+                const bot = new TeamsActivityHandler();
+                bot[functionName].call(bot, (context, next) => {
+                    ncalls++;
+                    return next();
+                });
+                const adapter = new TestAdapter(async (context) => bot.run(context));
+                await adapter
+                    .send(activity)
+                    .then(() => {
+                        assert(ncalls === 1, `On ${type} handler should only be called once, times called: ${ncalls}`);
+                    })
+                    .startTest();
             });
-
-            const adapter = new TestAdapter(async (context) => {
-                await bot.run(context);
-            });
-
-            await adapter
-                .send(activity)
-                .then(() => {
-                    assert(ncalls === 1, 'On Event should only be called once, times called: ' + ncalls.toString());
-                })
-                .startTest();
-        });
+        }
     });
 });
